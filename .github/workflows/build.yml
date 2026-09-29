@@ -61,8 +61,24 @@ jobs:
           name: test-report-${{ github.sha }}
           path: app/build/reports/tests/testDebugUnitTest
 
+      - name: Decode signing keystore
+        run: |
+          if [ -n "$SIGNING_KEY" ]; then
+            echo "$SIGNING_KEY" | base64 -d > "$RUNNER_TEMP/signing.keystore"
+            echo "MIHON_GITHUB_RELEASE=true" >> "$GITHUB_ENV"
+          else
+            echo "::warning::SIGNING_KEY secret is not set; the APK will be signed with a throwaway debug key"
+          fi
+        env:
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+
       - name: Build app
         run: ./gradlew assembleRelease -Pdist=ci -Pinclude-telemetry=false -Penable-updater=false
+        env:
+          storeFile: ${{ runner.temp }}/signing.keystore
+          storePassword: ${{ secrets.KEY_STORE_PASSWORD }}
+          keyAlias: ${{ secrets.ALIAS }}
+          keyPassword: ${{ secrets.KEY_PASSWORD }}
 
       - name: Upload APK
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
