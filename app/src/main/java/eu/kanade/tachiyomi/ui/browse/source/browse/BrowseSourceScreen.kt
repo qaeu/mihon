@@ -188,7 +188,7 @@ data class BrowseSourceScreen(
                                 },
                             )
                         }
-                        if (state.filters.isNotEmpty()) {
+                        if (state.filters.isNotEmpty() || state.savedSearches.isNotEmpty()) {
                             FilterChip(
                                 selected = state.listing is Listing.Search,
                                 onClick = viewModel::openFilterSheet,
@@ -245,9 +245,30 @@ data class BrowseSourceScreen(
                 SourceFilterDialog(
                     onDismissRequest = onDismissRequest,
                     filters = state.filters,
+                    savedSearches = state.savedSearches,
                     onReset = viewModel::resetFilters,
                     onFilter = { viewModel.search(filters = state.filters) },
                     onUpdate = viewModel::setFilters,
+                    onSaveSearch = { viewModel.setDialog(BrowseSourceViewModel.Dialog.SaveSearch) },
+                    onApplySavedSearch = viewModel::applySavedSearch,
+                    onManageSavedSearch = {
+                        viewModel.setDialog(BrowseSourceViewModel.Dialog.ManageSavedSearch(it))
+                    },
+                )
+            }
+            is BrowseSourceViewModel.Dialog.SaveSearch -> {
+                SaveSearchDialog(
+                    onDismissRequest = viewModel::openFilterSheet,
+                    onSave = viewModel::saveCurrentSearch,
+                    savedSearchNames = state.savedSearches.map { it.name },
+                )
+            }
+            is BrowseSourceViewModel.Dialog.ManageSavedSearch -> {
+                ManageSavedSearchDialog(
+                    onDismissRequest = viewModel::openFilterSheet,
+                    savedSearch = dialog.savedSearch,
+                    onSetDefault = { viewModel.setDefaultSavedSearch(dialog.savedSearch, it) },
+                    onDelete = { viewModel.deleteSavedSearch(dialog.savedSearch) },
                 )
             }
             is BrowseSourceViewModel.Dialog.AddDuplicateManga -> {
@@ -290,6 +311,17 @@ data class BrowseSourceScreen(
                 )
             }
             else -> {}
+        }
+
+        val savedFiltersMissingMessage = stringResource(MR.strings.saved_search_filters_missing)
+        LaunchedEffect(Unit) {
+            viewModel.events.collectLatest { event ->
+                when (event) {
+                    BrowseSourceViewModel.Event.SavedFiltersMissing -> {
+                        snackbarHostState.showSnackbar(savedFiltersMissingMessage)
+                    }
+                }
+            }
         }
 
         LaunchedEffect(Unit) {

@@ -14,6 +14,7 @@ data class BackupOptions(
     val extensionStores: Boolean = true,
     val sourceSettings: Boolean = true,
     val privateSettings: Boolean = false,
+    val savedSearches: Boolean = true,
 ) {
 
     fun asBooleanArray() = booleanArrayOf(
@@ -27,9 +28,11 @@ data class BackupOptions(
         extensionStores,
         sourceSettings,
         privateSettings,
+        savedSearches,
     )
 
-    fun canCreate() = libraryEntries || categories || appSettings || extensionStores || sourceSettings
+    fun canCreate() =
+        libraryEntries || categories || appSettings || extensionStores || sourceSettings || savedSearches
 
     companion object {
         val libraryOptions = listOf(
@@ -86,6 +89,11 @@ data class BackupOptions(
                 setter = { options, enabled -> options.copy(sourceSettings = enabled) },
             ),
             Entry(
+                label = MR.strings.saved_searches,
+                getter = BackupOptions::savedSearches,
+                setter = { options, enabled -> options.copy(savedSearches = enabled) },
+            ),
+            Entry(
                 label = MR.strings.private_settings,
                 getter = BackupOptions::privateSettings,
                 setter = { options, enabled -> options.copy(privateSettings = enabled) },
@@ -104,6 +112,8 @@ data class BackupOptions(
             extensionStores = array[7],
             sourceSettings = array[8],
             privateSettings = array[9],
+            // Missing from options saved by builds that predate saved searches
+            savedSearches = array.getOrElse(10) { true },
         )
     }
 

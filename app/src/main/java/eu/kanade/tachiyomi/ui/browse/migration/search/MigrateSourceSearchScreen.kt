@@ -7,6 +7,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.animateFloatingActionButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -23,10 +24,13 @@ import eu.kanade.presentation.components.SearchToolbar
 import eu.kanade.presentation.util.Screen
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.browse.source.browse.BrowseSourceViewModel
+import eu.kanade.tachiyomi.ui.browse.source.browse.ManageSavedSearchDialog
+import eu.kanade.tachiyomi.ui.browse.source.browse.SaveSearchDialog
 import eu.kanade.tachiyomi.ui.browse.source.browse.SourceFilterDialog
 import eu.kanade.tachiyomi.ui.home.HomeScreen
 import eu.kanade.tachiyomi.ui.manga.MangaScreen
 import eu.kanade.tachiyomi.ui.webview.WebViewScreen
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import mihon.feature.migration.dialog.MigrateMangaDialog
 import mihon.feature.migration.list.MigrationListScreen
@@ -132,9 +136,30 @@ data class MigrateSourceSearchScreen(
                 SourceFilterDialog(
                     onDismissRequest = onDismissRequest,
                     filters = state.filters,
+                    savedSearches = state.savedSearches,
                     onReset = viewModel::resetFilters,
                     onFilter = { viewModel.search(filters = state.filters) },
                     onUpdate = viewModel::setFilters,
+                    onSaveSearch = { viewModel.setDialog(BrowseSourceViewModel.Dialog.SaveSearch) },
+                    onApplySavedSearch = viewModel::applySavedSearch,
+                    onManageSavedSearch = {
+                        viewModel.setDialog(BrowseSourceViewModel.Dialog.ManageSavedSearch(it))
+                    },
+                )
+            }
+            is BrowseSourceViewModel.Dialog.SaveSearch -> {
+                SaveSearchDialog(
+                    onDismissRequest = viewModel::openFilterSheet,
+                    onSave = viewModel::saveCurrentSearch,
+                    savedSearchNames = state.savedSearches.map { it.name },
+                )
+            }
+            is BrowseSourceViewModel.Dialog.ManageSavedSearch -> {
+                ManageSavedSearchDialog(
+                    onDismissRequest = viewModel::openFilterSheet,
+                    savedSearch = dialog.savedSearch,
+                    onSetDefault = { viewModel.setDefaultSavedSearch(dialog.savedSearch, it) },
+                    onDelete = { viewModel.deleteSavedSearch(dialog.savedSearch) },
                 )
             }
             is BrowseSourceViewModel.Dialog.Migrate -> {
@@ -154,6 +179,17 @@ data class MigrateSourceSearchScreen(
                 )
             }
             else -> {}
+        }
+
+        val savedFiltersMissingMessage = stringResource(MR.strings.saved_search_filters_missing)
+        LaunchedEffect(Unit) {
+            viewModel.events.collectLatest { event ->
+                when (event) {
+                    BrowseSourceViewModel.Event.SavedFiltersMissing -> {
+                        snackbarHostState.showSnackbar(savedFiltersMissingMessage)
+                    }
+                }
+            }
         }
     }
 }
