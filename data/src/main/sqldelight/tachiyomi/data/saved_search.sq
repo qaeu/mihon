@@ -1,0 +1,54 @@
+import kotlin.Boolean;
+
+-- Named search queries and filter states, kept per source. There is no foreign key to `source`, since
+-- that table only caches sources of library entries and saved searches must outlive an uninstalled extension.
+CREATE TABLE saved_search(
+    id INTEGER NOT NULL PRIMARY KEY,
+    source_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    query TEXT,
+    filters TEXT NOT NULL,
+    is_default INTEGER AS Boolean NOT NULL DEFAULT 0,
+    UNIQUE(source_id, name)
+);
+
+-- A source has at most one default saved search
+CREATE UNIQUE INDEX saved_search_default_index ON saved_search(source_id) WHERE is_default = 1;
+
+getBySourceId:
+SELECT id, source_id, name, query, filters, is_default
+FROM saved_search
+WHERE source_id = :sourceId
+ORDER BY name COLLATE NOCASE;
+
+getDefault:
+SELECT id, source_id, name, query, filters, is_default
+FROM saved_search
+WHERE source_id = :sourceId
+AND is_default = 1;
+
+getAll:
+SELECT id, source_id, name, query, filters, is_default
+FROM saved_search;
+
+upsert:
+INSERT INTO saved_search(source_id, name, query, filters)
+VALUES (:sourceId, :name, :query, :filters)
+ON CONFLICT(source_id, name) DO UPDATE SET
+    query = excluded.query,
+    filters = excluded.filters;
+
+delete:
+DELETE FROM saved_search
+WHERE id = :id;
+
+clearDefault:
+UPDATE saved_search
+SET is_default = 0
+WHERE source_id = :sourceId;
+
+setDefault:
+UPDATE saved_search
+SET is_default = 1
+WHERE source_id = :sourceId
+AND name = :name;

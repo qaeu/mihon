@@ -1,0 +1,13 @@
+import kotlin.Boolean;
+
+CREATE TABLE saved_search(
+    id INTEGER NOT NULL PRIMARY KEY,
+    source_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    query TEXT,
+    filters TEXT NOT NULL,
+    is_default INTEGER AS Boolean NOT NULL DEFAULT 0,
+    UNIQUE(source_id, name)
+);
+
+CREATE UNIQUE INDEX saved_search_default_index ON saved_search(source_id) WHERE is_default = 1;

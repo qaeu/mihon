@@ -11,11 +11,13 @@ import eu.kanade.tachiyomi.data.backup.models.BackupCategory
 import eu.kanade.tachiyomi.data.backup.models.BackupExtensionStore
 import eu.kanade.tachiyomi.data.backup.models.BackupManga
 import eu.kanade.tachiyomi.data.backup.models.BackupPreference
+import eu.kanade.tachiyomi.data.backup.models.BackupSavedSearch
 import eu.kanade.tachiyomi.data.backup.models.BackupSourcePreferences
 import eu.kanade.tachiyomi.data.backup.restore.restorers.CategoriesRestorer
 import eu.kanade.tachiyomi.data.backup.restore.restorers.ExtensionStoreRestorer
 import eu.kanade.tachiyomi.data.backup.restore.restorers.MangaRestorer
 import eu.kanade.tachiyomi.data.backup.restore.restorers.PreferenceRestorer
+import eu.kanade.tachiyomi.data.backup.restore.restorers.SavedSearchRestorer
 import eu.kanade.tachiyomi.data.download.DownloadCache
 import eu.kanade.tachiyomi.util.system.createFileInCacheDir
 import kotlinx.coroutines.CoroutineScope
@@ -46,6 +48,7 @@ class BackupRestorer(
     private val categoriesRestorer: CategoriesRestorer,
     private val preferenceRestorer: PreferenceRestorer,
     private val extensionStoreRestorer: ExtensionStoreRestorer,
+    private val savedSearchRestorer: SavedSearchRestorer,
     private val mangaRestorer: MangaRestorer,
     private val backupDecoder: BackupDecoder,
 ) {
@@ -113,6 +116,9 @@ class BackupRestorer(
         if (options.sourceSettings) {
             restoreAmount += 1
         }
+        if (options.savedSearches) {
+            restoreAmount += backup.backupSavedSearches.size
+        }
 
         coroutineScope {
             val restoreCategoriesJob = if (options.categories) {
@@ -139,6 +145,9 @@ class BackupRestorer(
             }
             if (options.extensionStores) {
                 restoreExtensionStores(backup.backupExtensionStores)
+            }
+            if (options.savedSearches) {
+                restoreSavedSearches(backup.backupSavedSearches)
             }
 
             // TODO: optionally trigger online library + tracker update
@@ -252,6 +261,32 @@ class BackupRestorer(
                 }
                 notifier.showRestoreProgress(
                     context.stringResource(MR.strings.extensionStores),
+                    restoreProgress.load(),
+                    restoreAmount,
+                    isSync,
+                )
+            }
+    }
+
+    private fun CoroutineScope.restoreSavedSearches(
+        backupSavedSearches: List<BackupSavedSearch>,
+    ) = launch {
+        backupSavedSearches
+            .chunked(100)
+            .forEach { chunk ->
+                chunk.forEach {
+                    ensureActive()
+
+                    try {
+                        savedSearchRestorer(it)
+                    } catch (e: Exception) {
+                        errors.add(Date() to "Error restoring saved search: ${it.name} : ${e.message}")
+                    }
+
+                    restoreProgress.incrementAndFetch()
+                }
+                notifier.showRestoreProgress(
+                    context.stringResource(MR.strings.saved_searches),
                     restoreProgress.load(),
                     restoreAmount,
                     isSync,

@@ -29,6 +29,8 @@ import eu.kanade.tachiyomi.data.cache.CoverCache
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.util.removeCovers
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -38,9 +40,15 @@ import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import mihon.domain.savedsearch.interactor.DeleteSavedSearch
+import mihon.domain.savedsearch.interactor.GetSavedSearches
+import mihon.domain.savedsearch.interactor.SaveSearch
+import mihon.domain.savedsearch.interactor.SetDefaultSavedSearch
+import mihon.domain.savedsearch.model.SavedSearch
 import tachiyomi.core.common.preference.CheckboxState
 import tachiyomi.core.common.preference.mapAsCheckboxState
 import tachiyomi.core.common.util.lang.launchIO
@@ -76,6 +84,10 @@ class BrowseSourceViewModel(
     private val getManga: GetManga,
     private val updateManga: UpdateManga,
     private val addTracks: AddTracks,
+    private val getSavedSearches: GetSavedSearches,
+    private val saveSearch: SaveSearch,
+    private val deleteSavedSearch: DeleteSavedSearch,
+    private val setDefaultSavedSearch: SetDefaultSavedSearch,
     getIncognitoState: GetIncognitoState,
 ) : ViewModel() {
 
@@ -89,6 +101,9 @@ class BrowseSourceViewModel(
         fun create(sourceId: Long, listingQuery: String?): BrowseSourceViewModel
     }
 
+    private val _events = Channel<Event>(Channel.UNLIMITED)
+    val events: Flow<Event> = _events.receiveAsFlow()
+
     var displayMode by sourcePreferences.sourceDisplayMode.asState(viewModelScope)
 
     private val source: Source? get() = state.value.source
@@ -97,11 +112,24 @@ class BrowseSourceViewModel(
         viewModelScope.launchIO {
             val source = sourceManager.getOrStub(sourceId)
 
+            // Opening the source as usual starts from its default saved search, if it has one
+            val defaultSearch = if (state.value.listing == Listing.Popular) {
+                getSavedSearches.awaitDefault(sourceId)
+            } else {
+                null
+            }
+            var missingFilters = 0
+
             state.update {
                 var query: String? = null
                 var listing = it.listing
+                val filters = source.getFilterList()
 
-                if (listing is Listing.Search) {
+                if (defaultSearch != null) {
+                    missingFilters = FilterSerializer.deserializeInto(defaultSearch.filters, filters)
+                    query = defaultSearch.query
+                    listing = Listing.Search(query, filters)
+                } else if (listing is Listing.Search) {
                     query = listing.query
                     listing = Listing.Search(query, source.getFilterList())
                 }
@@ -109,13 +137,21 @@ class BrowseSourceViewModel(
                 it.copy(
                     source = source,
                     listing = listing,
-                    filters = source.getFilterList(),
+                    filters = filters,
                     toolbarQuery = query,
                 )
             }
 
+            if (missingFilters > 0) _events.send(Event.SavedFiltersMissing)
+
             if (!getIncognitoState.await(source.id)) {
                 sourcePreferences.lastUsedSource.set(source.id)
+            }
+        }
+
+        viewModelScope.launchIO {
+            getSavedSearches.subscribe(sourceId).collect { savedSearches ->
+                state.update { it.copy(savedSearches = savedSearches) }
             }
         }
     }
@@ -182,6 +218,47 @@ class BrowseSourceViewModel(
                 ),
                 toolbarQuery = query ?: input.query,
             )
+        }
+    }
+
+    /**
+     * Saves the query and the filters currently set in the filter sheet under [name], replacing any saved
+     * search of the same name for this source.
+     */
+    fun saveCurrentSearch(name: String) {
+        val source = source ?: return
+        val filters = FilterSerializer.serialize(state.value.filters, source.getFilterList())
+        val query = state.value.toolbarQuery ?: (state.value.listing as? Listing.Search)?.query
+        viewModelScope.launchIO {
+            saveSearch(sourceId = source.id, name = name, query = query, filters = filters)
+        }
+    }
+
+    fun applySavedSearch(savedSearch: SavedSearch) {
+        val source = source ?: return
+        val filters = source.getFilterList()
+        val missingFilters = FilterSerializer.deserializeInto(savedSearch.filters, filters)
+
+        state.update {
+            it.copy(
+                filters = filters,
+                listing = Listing.Search(query = savedSearch.query, filters = filters),
+                toolbarQuery = savedSearch.query,
+            )
+        }
+
+        if (missingFilters > 0) _events.trySend(Event.SavedFiltersMissing)
+    }
+
+    fun deleteSavedSearch(savedSearch: SavedSearch) {
+        viewModelScope.launchIO {
+            deleteSavedSearch.invoke(savedSearch)
+        }
+    }
+
+    fun setDefaultSavedSearch(savedSearch: SavedSearch, isDefault: Boolean) {
+        viewModelScope.launchIO {
+            setDefaultSavedSearch.invoke(savedSearch.sourceId, savedSearch.name.takeIf { isDefault })
         }
     }
 
@@ -355,6 +432,12 @@ class BrowseSourceViewModel(
             val initialSelection: List<CheckboxState.State<Category>>,
         ) : Dialog
         data class Migrate(val target: Manga, val current: Manga) : Dialog
+        data object SaveSearch : Dialog
+        data class ManageSavedSearch(val savedSearch: SavedSearch) : Dialog
+    }
+
+    sealed interface Event {
+        data object SavedFiltersMissing : Event
     }
 
     @Immutable
@@ -363,6 +446,7 @@ class BrowseSourceViewModel(
         val source: Source? = null,
         val filters: FilterList = FilterList(),
         val toolbarQuery: String? = null,
+        val savedSearches: List<SavedSearch> = emptyList(),
         val dialog: Dialog? = null,
     ) {
         val isUserQuery get() = listing is Listing.Search && !listing.query.isNullOrEmpty()
